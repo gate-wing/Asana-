@@ -32,7 +32,8 @@ from datetime import datetime
 
 # ---- 実行フォルダ（config.ini / ログの置き場所）----------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "config.ini")
+CONFIG_PATH = os.path.join(BASE_DIR, "config.ini")       # 各自：トークンだけ（Git管理外）
+SETTINGS_PATH = os.path.join(BASE_DIR, "settings.ini")   # 全員共通：git配布される設定
 LOG_PATH = os.path.join(BASE_DIR, "asana_reminder.log")
 
 API_BASE = "https://app.asana.com/api/1.0"
@@ -49,46 +50,83 @@ def log(message):
 
 
 def load_config():
-    """config.ini を読み込む"""
+    """設定を読み込む。
+      ・共通設定（キーワード/しきい値/通知時間など）は settings.ini（全員共通・git配布）
+      ・個人のトークンは config.ini（各自・Git管理外）
+    settings.ini を優先し、そこに無いキーだけ config.ini で補う。
+    これにより settings.ini を git pull で配れば、config.ini を各自で編集しなくても
+    全員に共通設定が行き渡る（旧バージョンで config.ini に設定を書いていても互換で動く）。
+    ※トークンは settings.ini からは絶対に読まない（GitHubに上げないため）。"""
     if not os.path.exists(CONFIG_PATH):
         raise FileNotFoundError("config.ini が見つかりません: " + CONFIG_PATH)
-    parser = configparser.ConfigParser()
-    parser.read(CONFIG_PATH, encoding="utf-8")
 
-    keywords_raw = parser.get("today_alert", "keywords", fallback="")
+    user = configparser.ConfigParser()       # config.ini（トークン。旧版では設定も）
+    user.read(CONFIG_PATH, encoding="utf-8")
+    common = configparser.ConfigParser()     # settings.ini（共通設定。無ければ空）
+    common.read(SETTINGS_PATH, encoding="utf-8")
+
+    def get(section, option, fallback=None):
+        """settings.ini を優先し、無ければ config.ini から取る（旧版互換）"""
+        if common.has_option(section, option):
+            return common.get(section, option)
+        if user.has_option(section, option):
+            return user.get(section, option)
+        return fallback
+
+    def get_int(section, option, fallback):
+        v = get(section, option, None)
+        try:
+            return int(str(v).strip()) if v is not None and str(v).strip() != "" else fallback
+        except ValueError:
+            return fallback
+
+    def get_float(section, option, fallback):
+        v = get(section, option, None)
+        try:
+            return float(str(v).strip()) if v is not None and str(v).strip() != "" else fallback
+        except ValueError:
+            return fallback
+
+    def get_bool(section, option, fallback):
+        v = get(section, option, None)
+        if v is None or str(v).strip() == "":
+            return fallback
+        return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+    keywords_raw = get("today_alert", "keywords", "") or ""
     keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
 
     # このキーワードを含むタスクは、担当者が割り当てられたら通知しない
-    assignee_optional_raw = parser.get(
-        "today_alert", "assignee_optional_keywords", fallback="流し込み,表示確認")
+    assignee_optional_raw = get(
+        "today_alert", "assignee_optional_keywords", "流し込み,表示確認") or ""
     assignee_optional = [k.strip() for k in assignee_optional_raw.split(",") if k.strip()]
 
     cfg = {
-        "token": parser.get("asana", "token", fallback="").strip(),
-        "workspace_gid": parser.get("settings", "workspace_gid").strip(),
-        "project_gid": parser.get("settings", "project_gid").strip(),
-        "status_field_gid": parser.get("settings", "status_field_gid").strip(),
-        "status_value_gid": parser.get("settings", "status_value_gid").strip(),
-        "threshold": parser.getint("settings", "threshold", fallback=5),
-        "evening_hour": parser.getint("settings", "evening_hour", fallback=17),
-        "evening_threshold": parser.getint("settings", "evening_threshold", fallback=1),
-        "active_start_hour": parser.getint("settings", "active_start_hour", fallback=9),
-        "active_end_hour": parser.getint("settings", "active_end_hour", fallback=22),
-        "quiet_weekend": parser.getboolean("settings", "quiet_weekend", fallback=True),
-        "interval_minutes": parser.getfloat("settings", "interval_minutes", fallback=10),
+        # ★トークンは config.ini からのみ（settings.ini からは読まない）
+        "token": (user.get("asana", "token", fallback="") or "").strip(),
+        "workspace_gid": (get("settings", "workspace_gid", "") or "").strip(),
+        "project_gid": (get("settings", "project_gid", "") or "").strip(),
+        "status_field_gid": (get("settings", "status_field_gid", "") or "").strip(),
+        "status_value_gid": (get("settings", "status_value_gid", "") or "").strip(),
+        "threshold": get_int("settings", "threshold", 5),
+        "evening_hour": get_int("settings", "evening_hour", 17),
+        "evening_threshold": get_int("settings", "evening_threshold", 1),
+        "active_start_hour": get_int("settings", "active_start_hour", 9),
+        "active_end_hour": get_int("settings", "active_end_hour", 22),
+        "quiet_weekend": get_bool("settings", "quiet_weekend", True),
+        "interval_minutes": get_float("settings", "interval_minutes", 10),
         # 今日の未担当タスクアラート
-        "today_enabled": parser.getboolean("today_alert", "enabled", fallback=True),
+        "today_enabled": get_bool("today_alert", "enabled", True),
         "keywords": keywords,
-        "match_time": parser.getboolean("today_alert", "match_time", fallback=True),
-        "today_threshold": parser.getint("today_alert", "threshold", fallback=1),
+        "match_time": get_bool("today_alert", "match_time", True),
+        "today_threshold": get_int("today_alert", "threshold", 1),
         # このStatusになったら通知対象から外す（作業完了まで通知し続けるため）
-        "done_statuses": [s.strip() for s in parser.get(
-            "today_alert", "done_statuses", fallback="作業完了,全て完了").split(",") if s.strip()],
+        "done_statuses": [s.strip() for s in (get(
+            "today_alert", "done_statuses", "作業完了,全て完了") or "").split(",") if s.strip()],
         "assignee_optional_keywords": assignee_optional,
         # ②のポップアップに表示するひとことアドバイス
-        "today_note": parser.get(
-            "today_alert", "note",
-            fallback="流し込み確認は午前中に対応しましょう").strip(),
+        "today_note": (get(
+            "today_alert", "note", "流し込み確認は午前中に対応しましょう") or "").strip(),
     }
     return cfg
 
