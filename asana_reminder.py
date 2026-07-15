@@ -257,9 +257,10 @@ class ReminderApp:
             "status": {
                 "ack": False, "popup": None, "y": 40,
                 "color": "#e53935", "color2": "#8e0000",   # 点滅する赤
+                "renotify": True,   # ×で閉じても、しきい値未満に減るまで10分ごとに出し続ける
                 "title": "⚠ 警告 - チーム内確認待ち",
                 "header": "チーム内確認待ち {count} 件",
-                "message": "制作・更新プロジェクトで確認待ちが {count} 件たまっています！\nすぐに対応してください。",
+                "message": "制作・更新プロジェクトで確認待ちが {count} 件たまっています！\nすぐに対応してください。\n（確認待ちが減るまでお知らせし続けます）",
             },
             "today": {
                 "ack": False, "popup": None, "y": 460,
