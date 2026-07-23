@@ -463,7 +463,8 @@ class ReminderApp:
         popup.deiconify()               # 位置確定後に表示（右上にだけ出る）
         popup.lift()
         popup.attributes("-topmost", True)   # deiconify後に最前面を再指定（隠れ防止）
-        popup.focus_force()                  # 確実に前面へ持ってくる
+        # ※focus_forceは使わない：キーボードフォーカスを奪うと、他アプリで文字入力中に
+        #   通知が出た瞬間に入力が中断されてしまうため（最前面表示のみで十分目立つ）
 
         # 枠と見出しを点滅させて「焦る」演出
         self._blink(popup, [popup, border, header, warn, count_lbl], [c1, c2])
